@@ -1,10 +1,13 @@
 {
   "name": "@jcbuisson/express-x-drizzle",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "",
-  "main": "drizzle-plugins.mjs",
+  "main": "src/drizzle-plugins.mjs",
   "type": "module",
   "private": false,
+  "publishConfig": {                                                                                                              
+    "access": "public"                                                                                                            
+  },
   "engines": {
     "node": ">= 14.0.0",
     "npm": ">= 6.0.0"
