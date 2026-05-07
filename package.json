@@ -1,0 +1,31 @@
+{
+  "name": "@jcbuissonexpress-x-drizzle",
+  "version": "1.0.2",
+  "description": "",
+  "main": "drizzle-plugins.mjs",
+  "type": "module",
+  "private": false,
+  "engines": {
+    "node": ">= 14.0.0",
+    "npm": ">= 6.0.0"
+  },
+  "homepage": "",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/jcbuisson/express-x-prisma.git"
+  },
+  "author": "Jean-Christophe Buisson <buisson@enseeiht.fr> (jcbuisson.dev)",
+  "license": "MIT",
+  "bugs": "",
+  "keywords": [],
+  "scripts": {
+    "dev": "",
+    "test": ""
+  },
+  "dependencies": {
+    "@jcbuisson/express-x": "^3.0.0"
+  },
+  "devDependencies": {
+
+  }
+}
