@@ -1,5 +1,5 @@
 {
-  "name": "@jcbuissonexpress-x-drizzle",
+  "name": "@jcbuisson/express-x-drizzle",
   "version": "1.0.2",
   "description": "",
   "main": "drizzle-plugins.mjs",
