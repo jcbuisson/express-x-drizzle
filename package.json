@@ -12,7 +12,7 @@
   "homepage": "",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/jcbuisson/express-x-prisma.git"
+    "url": "git+ssh://git@github.com/jcbuisson/express-x-drizzle.git"
   },
   "author": "Jean-Christophe Buisson <buisson@enseeiht.fr> (jcbuisson.dev)",
   "license": "MIT",
