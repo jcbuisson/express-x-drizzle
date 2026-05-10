@@ -1,4 +1,11 @@
+import express from "express"
+import { createServer } from "http"
+import { Server } from "socket.io"
+import bcrypt from 'bcryptjs'
+
 import { and, eq, getTableName } from "drizzle-orm";
+
+import { metadata } from '#root/src/db/schema.js';
 import { Mutex, truncateString } from '@jcbuisson/express-x'
 
 
@@ -11,9 +18,42 @@ function whereToDrizzleFilters(table, filters) {
    return conditions.length ? and(...conditions) : undefined;
 }
 
-//////////////////////////       DRIZZLE OFFLINE PLUGIN       //////////////////////////
+// //////////////////////////       DRIZZLE CRUD DATABSE PLUGIN       //////////////////////////
 
-const mutex = new Mutex()
+// export function drizzleDatabasePlugin(app, db, models) {
+
+//    // add a database service for each model
+//    for (const model of models) {
+//       const modelName = getTableName(model)
+
+//       app.createService(modelName, {
+
+//          findUnique: async (where) => {
+//             const rows = await db.select().from(model).where(whereToDrizzleFilters(model, where));
+//             return rows[0] ?? null;
+//          },
+
+//          findMany: async (where) => {
+//             return await db.select().from(model).where(whereToDrizzleFilters(model, where));
+//          },
+
+//          create: async (data) => {
+//             return await db.insert(model).values(data).returning();
+//          },
+
+//          update: async (uid, data) => {
+//             return await db.update(model).where(eq(model.uid, uid)).values(data).returning();
+//          },
+
+//          remove: async (uid) => {
+//             return await db.delete(model).where(eq(model.uid, uid)).returning();
+//          }
+//       })
+//    }
+// }
+
+
+//////////////////////////       DRIZZLE OFFLINE PLUGIN       //////////////////////////
 
 export function drizzleOfflinePlugin(app, db, metadata, models) {
 
@@ -58,12 +98,14 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
       })
    }
 
+   const syncMutex = new Mutex()
+
    // add a synchronization service
    app.createService('sync', {
 
       // AMÉLIORER : ne pas avoir une exclusion mutuelle globale, mais seulement par model/where
       go: async (modelName, where, cutoffDate, clientMetadataDict) => {
-         await mutex.acquire()
+         await syncMutex.acquire()
          try {
             console.log('>>>>> SYNC', modelName, where, cutoffDate)
             const databaseService = app.service(modelName)
@@ -166,7 +208,7 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
             }
          
             // STEP5: return to client the changes to perform on its cache, and create/update to perform on database with full data
-            // database creations & updates are done later by the client with complete data (this function only has client values's meta-data)
+            // Database creations & updates are done later by the client with complete data (this function only has client values's meta-data)
             return {
                toAdd: addClient,
                toUpdate: updateClient,
@@ -178,7 +220,7 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
          } catch(err) {
             console.log('*** err sync', err)
          } finally {
-            mutex.release()
+            syncMutex.release()
          }
       },
    })
