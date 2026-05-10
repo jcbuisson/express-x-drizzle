@@ -1,6 +1,6 @@
 {
   "name": "@jcbuisson/express-x-drizzle",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "",
   "main": "src/drizzle-plugins.mjs",
   "type": "module",
