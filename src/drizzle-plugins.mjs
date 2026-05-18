@@ -1,22 +1,31 @@
-import express from "express"
-import { createServer } from "http"
-import { Server } from "socket.io"
-import bcrypt from 'bcryptjs'
+import { and, eq, gt, gte, lt, lte, isNull, getTableName } from "drizzle-orm";
 
-import { and, eq, getTableName } from "drizzle-orm";
-
-import { metadata } from '#root/src/db/schema.js';
-import { Mutex, truncateString } from '@jcbuisson/express-x'
+import { Mutex, truncateString, computeSyncResult } from '@jcbuisson/express-x'
 
 
 //////////////////////////       UTILITIES       //////////////////////////
 
-function whereToDrizzleFilters(table, filters) {
-   const conditions = Object.entries(filters)
+function whereToDrizzleFilters(table, where) {
+   const conditions = Object.entries(where)
       .filter(([_, value]) => value !== undefined)
-      .map(([key, value]) => eq(table[key], value));
+      .map(([key, value]) => {
+         if (value === null) return isNull(table[key])
+         if (typeof value === 'object') {
+            // Collect ALL range bounds — a compound { gte:1, lte:10 } needs both
+            const bounds = []
+            if ('gte' in value) bounds.push(gte(table[key], value.gte))
+            if ('gt'  in value) bounds.push(gt(table[key],  value.gt))
+            if ('lte' in value) bounds.push(lte(table[key], value.lte))
+            if ('lt'  in value) bounds.push(lt(table[key],  value.lt))
+            if (bounds.length > 0) return and(...bounds)
+         }
+         return eq(table[key], value)
+      })
    return conditions.length ? and(...conditions) : undefined;
 }
+
+
+// DOIT FAIRE UN ROLLBACK EN CAS D'ERREUR SERVEUR (EX: ERREUR SÉMANTIQUE TYPE PB CLÉ ÉTRANGÈRE OU AUTRE)
 
 
 //////////////////////////       DRIZZLE OFFLINE PLUGIN       //////////////////////////
@@ -39,154 +48,109 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
          },
          
          createWithMeta: async (uid, data, created_at) => {
-            db.transaction(async (tx) => {
-               const value = await tx.insert(model).values({ uid, ...data }).returning();
-               const meta = await tx.insert(metadata).values({ uid, created_at }).returning();
+            const ts = new Date(created_at)
+            return await db.transaction(async (tx) => {
+               // Upsert: if the model row already exists (e.g. a concurrent createWithMeta
+               // from the direct create() path landed before the sync's addDatabase step),
+               // update it instead of throwing a PK conflict that would rollback the
+               // client's Dexie record.
+               const [value] = await tx.insert(model)
+                  .values({ uid, ...data })
+                  .onConflictDoUpdate({ target: model.uid, set: data })
+                  .returning();
+               // Upsert metadata: handles re-creation after a prior deleteWithMeta.
+               const [meta] = await tx.insert(metadata)
+                  .values({ uid, created_at: ts })
+                  .onConflictDoUpdate({
+                     target: metadata.uid,
+                     set: { created_at: ts, deleted_at: null, updated_at: null },
+                  })
+                  .returning();
                return [value, meta]
             })
          },
-         
+
          updateWithMeta: async (uid, data, updated_at) => {
-            db.transaction(async (tx) => {
-               const value = await tx.update(model).set(data).where(eq(model.uid, uid)).returning();
-               const meta = await tx.update(metadata).set({ updated_at }).where(eq(metadata.uid, uid)).returning();
+            const ts = updated_at ? new Date(updated_at) : null
+            return await db.transaction(async (tx) => {
+               const [value] = await tx.update(model).set(data).where(eq(model.uid, uid)).returning();
+               // Upsert metadata: if the row is missing (data-integrity gap where the
+               // model row exists but no metadata row), create it so the loop stops.
+               const [meta] = await tx.insert(metadata)
+                  .values({ uid, updated_at: ts })
+                  .onConflictDoUpdate({ target: metadata.uid, set: { updated_at: ts } })
+                  .returning();
                return [value, meta]
             })
          },
-         
+
          deleteWithMeta: async (uid, deleted_at) => {
-            db.transaction(async (tx) => {
-               const value = await tx.delete(model).where(eq(model.uid, uid)).returning();
-               const meta = await tx.update(metadata).set({ deleted_at }).where(eq(metadata.uid, uid)).returning();
+            return await db.transaction(async (tx) => {
+               const [value] = await tx.delete(model).where(eq(model.uid, uid)).returning();
+               const [meta] = await tx.update(metadata).set({ deleted_at: new Date(deleted_at) }).where(eq(metadata.uid, uid)).returning();
                return [value, meta]
             })
          },
       })
    }
 
-   const syncMutex = new Mutex()
+   const syncMutexes = new Map()
 
    // add a synchronization service
    app.createService('sync', {
 
-      // AMÉLIORER : ne pas avoir une exclusion mutuelle globale, mais seulement par model/where
+      // CUTOFFDATE INUTILE ?
       go: async (modelName, where, cutoffDate, clientMetadataDict) => {
-         await syncMutex.acquire()
+
+         // get or create a mutex specific to modelName + where
+         const mutexKey = `${modelName}:${JSON.stringify(Object.fromEntries(Object.entries(where).sort()))}`
+         if (!syncMutexes.has(mutexKey)) syncMutexes.set(mutexKey, new Mutex())
+         // acquire it: no other sync operation from another client on this model+where can occur in parallel
+         await syncMutexes.get(mutexKey).acquire()
+
          try {
             console.log('>>>>> SYNC', modelName, where, cutoffDate)
             const databaseService = app.service(modelName)
       
-            // STEP 1: get existing database `where` values
+            // STEP1: get existing database `where` values and build a dictionary
             const databaseValues = await databaseService.findMany(where)
-         
             const databaseValuesDict = databaseValues.reduce((accu, value) => {
                accu[value.uid] = value
                return accu
             }, {})
-            // console.log('clientMetadataDict', clientMetadataDict)
-            // console.log('databaseValuesDict', databaseValuesDict)
-         
-            // STEP 2: compute intersections between client and database uids
-            const onlyDatabaseIds = new Set()
-            const onlyClientIds = new Set()
-            const databaseAndClientIds = new Set()
-         
-            for (const uid in databaseValuesDict) {
-               if (uid in clientMetadataDict) {
-                  databaseAndClientIds.add(uid)
-               } else {
-                  onlyDatabaseIds.add(uid)
-               }
-            }
-         
-            for (const uid in clientMetadataDict) {
-               if (uid in databaseValuesDict) {
-                  databaseAndClientIds.add(uid)
-               } else {
-                  onlyClientIds.add(uid)
-               }
-            }
-            // console.log('onlyDatabaseIds', onlyDatabaseIds)
-            // console.log('onlyClientIds', onlyClientIds)
-            // console.log('databaseAndClientIds', databaseAndClientIds)
-         
-            // STEP 3: build add/update/delete sets
-            const addDatabase = []
-            const updateDatabase = []
-            const deleteDatabase = []
-         
-            const addClient = []
-            const updateClient = []
-            const deleteClient = []
-         
-            for (const uid of onlyDatabaseIds) {
-               const databaseValue = databaseValuesDict[uid]
-               const databaseMetaData = (await db.select().from(metadata).where(eq(metadata.uid, uid)))[0]
-                  || { uid, created_at: new Date() } // should not happen
-               addClient.push([databaseValue, databaseMetaData])
-            }
-         
-            for (const uid of onlyClientIds) {
-               const clientMetaData = clientMetadataDict[uid]
-               if (clientMetaData.deleted_at) {
-                  deleteClient.push([uid, clientMetaData.deleted_at])
-               } else if (new Date(clientMetaData.created_at) > cutoffDate) {
-                  addDatabase.push(clientMetaData)
-               } else {
-                  // ???
-               }
-            }
-         
-            for (const uid of databaseAndClientIds) {
-               const databaseValue = databaseValuesDict[uid]
-               const clientMetaData = clientMetadataDict[uid]
-                  || { uid, created_at: new Date() } // should not happen
-               if (clientMetaData.deleted_at) {
-                  deleteDatabase.push(uid)
-                  deleteClient.push([uid, clientMetaData.deleted_at])
-               } else {
-                  const databaseMetaData = (await db.select().from(metadata).where(eq(metadata.uid, uid)))[0]
-                     || { uid, created_at: new Date() } // should not happen
-                  const clientUpdatedAt = new Date(clientMetaData.updated_at || clientMetaData.created_at)
-                  const databaseUpdatedAt = new Date(databaseMetaData.updated_at || databaseMetaData.created_at)
-                  const dateDifference = clientUpdatedAt - databaseUpdatedAt
-                  // console.log('databaseMetaData', databaseMetaData, 'clientMetaData', clientMetaData, 'dateDifference', dateDifference)
-                  if (dateDifference > 0) {
-                     updateDatabase.push(clientMetaData)
-                  } else if (dateDifference < 0) {
-                     updateClient.push(databaseValue)
-                  }
-               }
-            }
-            console.log('addDatabase', truncateString(JSON.stringify(addDatabase)))
-            console.log('deleteDatabase', truncateString(JSON.stringify(deleteDatabase)))
-            console.log('updateDatabase', truncateString(JSON.stringify(updateDatabase)))
-         
-            console.log('addClient', truncateString(JSON.stringify(addClient)))
-            console.log('deleteClient', truncateString(JSON.stringify(deleteClient)))
-            console.log('updateClient', truncateString(JSON.stringify(updateClient)))
-         
-            // STEP4: execute database deletions
-            for (const uid of deleteDatabase) {
-               const clientMetaData = clientMetadataDict[uid]
-               // console.log('---delete', uid, clientMetaData)
-               await databaseService.deleteWithMeta(uid, clientMetaData.deleted_at)
-            }
-         
-            // STEP5: return to client the changes to perform on its cache, and create/update to perform on database with full data
-            // Database creations & updates are done later by the client with complete data (this function only has client values's meta-data)
-            return {
-               toAdd: addClient,
-               toUpdate: updateClient,
-               toDelete: deleteClient,
 
-               addDatabase,
-               updateDatabase,
+            // STEP 2: fetch metadata for each database record
+            const databaseMetadataDict = {}
+            for (const uid of Object.keys(databaseValuesDict)) {
+               const meta = (await db.select().from(metadata).where(eq(metadata.uid, uid)))[0] ?? null
+               if (meta) databaseMetadataDict[uid] = meta
+            }
+
+            // STEP 3: compute sync result
+            const result = computeSyncResult(databaseValuesDict, clientMetadataDict, databaseMetadataDict)
+
+            // STEP 4: execute server-side deletions
+            for (const uid of result.deleteDatabase) {
+               await databaseService.deleteWithMeta(uid, clientMetadataDict[uid].deleted_at)
+            }
+
+            console.log('addDatabase', truncateString(JSON.stringify(result.addDatabase)))
+            console.log('updateDatabase', truncateString(JSON.stringify(result.updateDatabase)))
+            console.log('addClient', truncateString(JSON.stringify(result.addClient)))
+            console.log('deleteClient', truncateString(JSON.stringify(result.deleteClient)))
+            console.log('updateClient', truncateString(JSON.stringify(result.updateClient)))
+
+            return {
+               addClient: result.addClient,
+               updateClient: result.updateClient,
+               deleteClient: result.deleteClient,
+               addDatabase: result.addDatabase,
+               updateDatabase: result.updateDatabase,
             }
          } catch(err) {
             console.log('*** err sync', err)
          } finally {
-            syncMutex.release()
+            syncMutexes.get(mutexKey).release()
          }
       },
    })

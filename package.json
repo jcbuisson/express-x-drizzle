@@ -1,16 +1,19 @@
 {
   "name": "@jcbuisson/express-x-drizzle",
-  "version": "1.0.5",
-  "description": "",
+  "version": "1.0.7",
+  "description": "Drizzle ORM plugins for express-x framework",
   "main": "src/drizzle-plugins.mjs",
   "type": "module",
   "private": false,
-  "publishConfig": {                                                                                                              
-    "access": "public"                                                                                                            
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": ">= 14.0.0",
     "npm": ">= 6.0.0"
+  },
+  "imports": {
+    "#root/*": "./*"
   },
   "homepage": "",
   "repository": {
@@ -22,13 +25,20 @@
   "bugs": "",
   "keywords": [],
   "scripts": {
-    "dev": "",
-    "test": ""
   },
   "dependencies": {
-    "@jcbuisson/express-x": "^3.0.0"
+    "@jcbuisson/express-x": "^3.0.4",
+    "@jcbuisson/express-x-client": "^3.0.5",
+    "@vueuse/core": "^14.3.0",
+    "dexie": "^4.4.2",
+    "drizzle-orm": "^0.45.2",
+    "fake-indexeddb": "^6.2.5",
+    "rxjs": "^7.8.2",
+    "socket.io-client": "^4.8.3",
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
-
+    "@electric-sql/pglite": "^0.4.5",
+    "tsx": "^4.22.1"
   }
 }
