@@ -87,7 +87,11 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
          deleteWithMeta: async (uid, deleted_at) => {
             return await db.transaction(async (tx) => {
                const [value] = await tx.delete(model).where(eq(model.uid, uid)).returning();
-               const [meta] = await tx.update(metadata).set({ deleted_at: new Date(deleted_at) }).where(eq(metadata.uid, uid)).returning();
+               const ts = new Date(deleted_at)
+               const [meta] = await tx.insert(metadata)
+                  .values({ uid, deleted_at: ts })
+                  .onConflictDoUpdate({ target: metadata.uid, set: { deleted_at: ts } })
+                  .returning();
                return [value, meta]
             })
          },
