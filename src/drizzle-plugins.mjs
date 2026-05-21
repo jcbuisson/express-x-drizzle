@@ -149,6 +149,7 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
             }
          } catch(err) {
             console.log('*** err sync', err)
+            throw err
          } finally {
             syncMutexes.get(mutexKey).release()
          }

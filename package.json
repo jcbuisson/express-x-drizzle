@@ -1,6 +1,6 @@
 {
   "name": "@jcbuisson/express-x-drizzle",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Drizzle ORM plugins for express-x framework",
   "main": "src/drizzle-plugins.mjs",
   "type": "module",
@@ -24,10 +24,9 @@
   "license": "MIT",
   "bugs": "",
   "keywords": [],
-  "scripts": {
-  },
+  "scripts": {},
   "dependencies": {
-    "@jcbuisson/express-x": "^3.0.4",
+    "@jcbuisson/express-x": "^3.0.5",
     "@jcbuisson/express-x-client": "^3.0.5",
     "@vueuse/core": "^14.3.0",
     "dexie": "^4.4.2",
