@@ -5,6 +5,17 @@ import { Mutex, truncateString, computeSyncResult } from '@jcbuisson/express-x'
 
 //////////////////////////       UTILITIES       //////////////////////////
 
+function stringifyWithSortedKeys(obj) {
+   return JSON.stringify(obj, (_, value) => {
+      if (value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.toString.call(value) === '[object Object]') {
+         const sorted = {}
+         Object.keys(value).sort().forEach(k => { sorted[k] = value[k] })
+         return sorted
+      }
+      return value
+   })
+}
+
 function whereToDrizzleFilters(table, where) {
    const conditions = Object.entries(where)
       .filter(([_, value]) => value !== undefined)
@@ -107,7 +118,7 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
       go: async (modelName, where, cutoffDate, clientMetadataDict) => {
 
          // get or create a mutex specific to modelName + where
-         const mutexKey = `${modelName}:${JSON.stringify(Object.fromEntries(Object.entries(where).sort()))}`
+         const mutexKey = `${modelName}:${stringifyWithSortedKeys(where)}`
          if (!syncMutexes.has(mutexKey)) syncMutexes.set(mutexKey, new Mutex())
          // acquire it: no other sync operation from another client on this model+where can occur in parallel
          await syncMutexes.get(mutexKey).acquire()
