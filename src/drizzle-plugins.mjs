@@ -166,7 +166,10 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
             console.log('*** err sync', err)
             throw err
          } finally {
-            syncMutexes.get(mutexKey).release()
+            const mutex = syncMutexes.get(mutexKey)
+            mutex.release()
+            // Remove idle mutexes so the Map stays bounded for dynamic where clauses.
+            if (mutex.queue.length === 0) syncMutexes.delete(mutexKey)
          }
       },
    })
