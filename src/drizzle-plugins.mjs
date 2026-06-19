@@ -193,8 +193,7 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
    // add a synchronization service
    app.createService('sync', {
 
-      // CUTOFFDATE INUTILE ?
-      go: async (modelName, where, cutoffDate, clientMetadataDict) => {
+      go: async (modelName, where, clientMetadataDict) => {
 
          // overlap-aware lock so independent scopes can still run in parallel, but overlapping where predicates do not
          if (!syncLocks.has(modelName)) syncLocks.set(modelName, new OverlapLock())
@@ -202,7 +201,7 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
          const releaseSyncLock = await syncLock.acquire(where)
 
          try {
-            console.log('>>>>> SYNC', modelName, where, cutoffDate)
+            console.log('>>>>> SYNC', modelName, where)
             const databaseService = app.service(modelName)
       
             // STEP1: get existing database `where` values and build a dictionary
