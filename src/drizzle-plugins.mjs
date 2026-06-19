@@ -1,20 +1,9 @@
 import { and, eq, gt, gte, lt, lte, isNull, getTableName } from "drizzle-orm";
 
-import { Mutex, truncateString, computeSyncResult } from '@jcbuisson/express-x'
+import { truncateString, computeSyncResult } from '@jcbuisson/express-x'
 
 
 //////////////////////////       UTILITIES       //////////////////////////
-
-function stringifyWithSortedKeys(obj) {
-   return JSON.stringify(obj, (_, value) => {
-      if (value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.toString.call(value) === '[object Object]') {
-         const sorted = {}
-         Object.keys(value).sort().forEach(k => { sorted[k] = value[k] })
-         return sorted
-      }
-      return value
-   })
-}
 
 function whereToDrizzleFilters(table, where) {
    const conditions = Object.entries(where)
@@ -35,8 +24,98 @@ function whereToDrizzleFilters(table, where) {
    return conditions.length ? and(...conditions) : undefined;
 }
 
+function isPlainObject(value) {
+   return value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.toString.call(value) === '[object Object]'
+}
 
-// DOIT FAIRE UN ROLLBACK EN CAS D'ERREUR SERVEUR (EX: ERREUR SÉMANTIQUE TYPE PB CLÉ ÉTRANGÈRE OU AUTRE)
+function hasRangeOperator(value) {
+   return isPlainObject(value) && ['gte', 'gt', 'lte', 'lt'].some(key => key in value)
+}
+
+function valueWithinRange(value, range) {
+   if (value === null || value === undefined) return false
+   if ('gte' in range && value < range.gte) return false
+   if ('gt' in range && value <= range.gt) return false
+   if ('lte' in range && value > range.lte) return false
+   if ('lt' in range && value >= range.lt) return false
+   return true
+}
+
+function rangesOverlap(a, b) {
+   const lower = [
+      'gte' in a && { value: a.gte, inclusive: true },
+      'gt' in a && { value: a.gt, inclusive: false },
+      'gte' in b && { value: b.gte, inclusive: true },
+      'gt' in b && { value: b.gt, inclusive: false },
+   ].filter(Boolean).sort((x, y) => x.value === y.value ? Number(x.inclusive) - Number(y.inclusive) : x.value > y.value ? -1 : 1)[0]
+
+   const upper = [
+      'lte' in a && { value: a.lte, inclusive: true },
+      'lt' in a && { value: a.lt, inclusive: false },
+      'lte' in b && { value: b.lte, inclusive: true },
+      'lt' in b && { value: b.lt, inclusive: false },
+   ].filter(Boolean).sort((x, y) => x.value === y.value ? Number(x.inclusive) - Number(y.inclusive) : x.value < y.value ? -1 : 1)[0]
+
+   if (!lower || !upper) return true
+   if (lower.value < upper.value) return true
+   if (lower.value > upper.value) return false
+   return lower.inclusive && upper.inclusive
+}
+
+function constraintsOverlap(a, b) {
+   if (a === undefined || b === undefined) return true
+   if (a === null || b === null) return a === null && b === null
+
+   const aRange = hasRangeOperator(a)
+   const bRange = hasRangeOperator(b)
+
+   if (aRange && bRange) return rangesOverlap(a, b)
+   if (aRange) return valueWithinRange(b, a)
+   if (bRange) return valueWithinRange(a, b)
+   if (isPlainObject(a) || isPlainObject(b)) return true
+   return a === b
+}
+
+function whereScopesOverlap(a = {}, b = {}) {
+   const sharedKeys = Object.keys(a).filter(key => key in b)
+   for (const key of sharedKeys) {
+      if (!constraintsOverlap(a[key], b[key])) return false
+   }
+   return true
+}
+
+class OverlapLock {
+   constructor() {
+      this.active = []
+      this.queue = []
+   }
+
+   acquire(where) {
+      return new Promise(resolve => {
+         const entry = { where, resolve }
+         this.queue.push(entry)
+         this.pump()
+      })
+   }
+
+   pump() {
+      for (let i = 0; i < this.queue.length; i++) {
+         const entry = this.queue[i]
+         if (this.active.some(active => whereScopesOverlap(active.where, entry.where))) continue
+         this.queue.splice(i, 1)
+         i -= 1
+         this.active.push(entry)
+         entry.resolve(() => {
+            this.active = this.active.filter(active => active !== entry)
+            this.pump()
+         })
+      }
+   }
+
+   get idle() {
+      return this.active.length === 0 && this.queue.length === 0
+   }
+}
 
 
 //////////////////////////       DRIZZLE OFFLINE PLUGIN       //////////////////////////
@@ -109,7 +188,7 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
       })
    }
 
-   const syncMutexes = new Map()
+   const syncLocks = new Map()
 
    // add a synchronization service
    app.createService('sync', {
@@ -117,11 +196,10 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
       // CUTOFFDATE INUTILE ?
       go: async (modelName, where, cutoffDate, clientMetadataDict) => {
 
-         // get or create a mutex specific to modelName + where
-         const mutexKey = `${modelName}:${stringifyWithSortedKeys(where)}`
-         if (!syncMutexes.has(mutexKey)) syncMutexes.set(mutexKey, new Mutex())
-         // acquire it: no other sync operation from another client on this model+where can occur in parallel
-         await syncMutexes.get(mutexKey).acquire()
+         // overlap-aware lock so independent scopes can still run in parallel, but overlapping where predicates do not
+         if (!syncLocks.has(modelName)) syncLocks.set(modelName, new OverlapLock())
+         const syncLock = syncLocks.get(modelName)
+         const releaseSyncLock = await syncLock.acquire(where)
 
          try {
             console.log('>>>>> SYNC', modelName, where, cutoffDate)
@@ -166,10 +244,8 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
             console.log('*** err sync', err)
             throw err
          } finally {
-            const mutex = syncMutexes.get(mutexKey)
-            mutex.release()
-            // Remove idle mutexes so the Map stays bounded for dynamic where clauses.
-            if (mutex.queue.length === 0) syncMutexes.delete(mutexKey)
+            releaseSyncLock()
+            if (syncLock.idle) syncLocks.delete(modelName)
          }
       },
    })
