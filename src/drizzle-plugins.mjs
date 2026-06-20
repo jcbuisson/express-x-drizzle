@@ -260,7 +260,8 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
 
             // STEP 4: execute server-side deletions
             for (const uid of result.deleteDatabase) {
-               await databaseService.deleteWithMeta(uid, clientMetadataDict[uid].deleted_at)
+               const deletedAt = clientMetadataDict[uid]?.deleted_at ?? databaseMetadataDict[uid]?.deleted_at
+               await databaseService.deleteWithMeta(uid, deletedAt)
             }
 
             console.log('addDatabase', truncateString(JSON.stringify(result.addDatabase)))
