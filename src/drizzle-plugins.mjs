@@ -188,6 +188,13 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
                   await tx.delete(model).where(eq(model.uid, uid))
                   return [undefined, existingMeta]
                }
+               const existingTime = existingMeta
+                  ? new Date(existingMeta.updated_at || existingMeta.created_at)
+                  : null
+               if (existingTime && (!ts || existingTime > ts)) {
+                  const value = (await tx.select().from(model).where(eq(model.uid, uid)))[0] ?? undefined
+                  return [value, existingMeta]
+               }
                let [value] = await tx.update(model).set(data).where(eq(model.uid, uid)).returning();
                // Upsert metadata: if the row is missing (data-integrity gap where the
                // model row exists but no metadata row), create it so the loop stops.
