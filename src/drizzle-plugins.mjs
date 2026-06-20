@@ -144,7 +144,7 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
                const existingTime = existingMeta
                   ? new Date(existingMeta.deleted_at || existingMeta.updated_at || existingMeta.created_at)
                   : null
-               if (existingTime && existingTime > ts) {
+               if (existingTime && existingTime >= ts) {
                   const value = (await tx.select().from(model).where(eq(model.uid, uid)))[0] ?? undefined
                   return [value, existingMeta]
                }
