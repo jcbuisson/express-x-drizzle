@@ -211,9 +211,14 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
                return accu
             }, {})
 
-            // STEP 2: fetch metadata for each database record
+            // STEP 2: fetch metadata for each database record and each client-sent uid.
+            // Client uids matter when the server row was deleted: only the tombstone remains.
             const databaseMetadataDict = {}
-            for (const uid of Object.keys(databaseValuesDict)) {
+            const metadataUids = new Set([
+               ...Object.keys(databaseValuesDict),
+               ...Object.keys(clientMetadataDict ?? {}),
+            ])
+            for (const uid of metadataUids) {
                const meta = (await db.select().from(metadata).where(eq(metadata.uid, uid)))[0] ?? null
                if (meta) databaseMetadataDict[uid] = meta
             }
