@@ -200,6 +200,13 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
                   : null
                if (existingTime && (!ts || existingTime > ts)) {
                   const value = (await tx.select().from(model).where(eq(model.uid, uid)))[0] ?? undefined
+                  if (!value) {
+                     const [meta] = await tx.insert(metadata)
+                        .values({ uid, deleted_at: existingTime })
+                        .onConflictDoUpdate({ target: metadata.uid, set: { deleted_at: existingTime } })
+                        .returning();
+                     return [undefined, meta]
+                  }
                   return [value, existingMeta]
                }
                let [value] = await tx.update(model).set(data).where(eq(model.uid, uid)).returning();
