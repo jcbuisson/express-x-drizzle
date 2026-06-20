@@ -202,8 +202,10 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
             return await db.transaction(async (tx) => {
                const ts = new Date(deleted_at)
                const existingMeta = (await tx.select().from(metadata).where(eq(metadata.uid, uid)))[0] ?? null
-               const existingUpdatedAt = existingMeta ? new Date(existingMeta.updated_at || existingMeta.created_at) : null
-               if (existingUpdatedAt && existingUpdatedAt > ts) {
+               const existingTime = existingMeta
+                  ? new Date(existingMeta.deleted_at || existingMeta.updated_at || existingMeta.created_at)
+                  : null
+               if (existingTime && existingTime > ts) {
                   const value = (await tx.select().from(model).where(eq(model.uid, uid)))[0] ?? undefined
                   return [value, existingMeta]
                }
