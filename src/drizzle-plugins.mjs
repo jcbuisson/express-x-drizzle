@@ -140,6 +140,14 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
          createWithMeta: async (uid, data, created_at) => {
             const ts = new Date(created_at)
             return await db.transaction(async (tx) => {
+               const existingMeta = (await tx.select().from(metadata).where(eq(metadata.uid, uid)))[0] ?? null
+               const existingTime = existingMeta
+                  ? new Date(existingMeta.deleted_at || existingMeta.updated_at || existingMeta.created_at)
+                  : null
+               if (existingTime && existingTime > ts) {
+                  const value = (await tx.select().from(model).where(eq(model.uid, uid)))[0] ?? undefined
+                  return [value, existingMeta]
+               }
                // Upsert: if the model row already exists (e.g. a concurrent createWithMeta
                // from the direct create() path landed before the sync's addDatabase step),
                // update it instead of throwing a PK conflict that would rollback the
