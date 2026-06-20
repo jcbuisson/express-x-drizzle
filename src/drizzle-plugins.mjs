@@ -209,8 +209,11 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
                   }
                   return [value, existingMeta]
                }
-               let [value] = await tx.update(model).set(data).where(eq(model.uid, uid)).returning();
-               // Upsert metadata: if the row is missing (data-integrity gap where the
+               const [value] = await tx.insert(model)
+                  .values({ uid, ...data })
+                  .onConflictDoUpdate({ target: model.uid, set: data })
+                  .returning();
+               // Upsert metadata: if metadata is missing (data-integrity gap where the
                // model row exists but no metadata row), create it so the loop stops.
                const [meta] = await tx.insert(metadata)
                   .values({ uid, updated_at: ts })
