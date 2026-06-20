@@ -171,12 +171,11 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
          updateWithMeta: async (uid, data, updated_at) => {
             const ts = updated_at ? new Date(updated_at) : null
             return await db.transaction(async (tx) => {
-               let [value] = await tx.update(model).set(data).where(eq(model.uid, uid)).returning();
                const existingMeta = (await tx.select().from(metadata).where(eq(metadata.uid, uid)))[0] ?? null
-               if (!value && existingMeta?.deleted_at) {
+               if (existingMeta?.deleted_at) {
                   const deletedAt = new Date(existingMeta.deleted_at)
                   if (ts && ts > deletedAt) {
-                     ;[value] = await tx.insert(model)
+                     const [value] = await tx.insert(model)
                         .values({ uid, ...data })
                         .onConflictDoUpdate({ target: model.uid, set: data })
                         .returning();
@@ -186,8 +185,10 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
                         .returning();
                      return [value, meta]
                   }
-                  return [value, existingMeta]
+                  await tx.delete(model).where(eq(model.uid, uid))
+                  return [undefined, existingMeta]
                }
+               let [value] = await tx.update(model).set(data).where(eq(model.uid, uid)).returning();
                // Upsert metadata: if the row is missing (data-integrity gap where the
                // model row exists but no metadata row), create it so the loop stops.
                const [meta] = await tx.insert(metadata)

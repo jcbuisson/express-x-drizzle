@@ -1,6 +1,6 @@
 {
   "name": "@jcbuisson/express-x-drizzle",
-  "version": "3.1.29",
+  "version": "3.1.30",
   "description": "Drizzle ORM plugins for express-x framework",
   "main": "src/drizzle-plugins.mjs",
   "type": "module",
