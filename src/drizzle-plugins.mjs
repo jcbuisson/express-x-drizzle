@@ -9,19 +9,25 @@ function whereToDrizzleFilters(table, where) {
    const conditions = Object.entries(where)
       .filter(([_, value]) => value !== undefined)
       .map(([key, value]) => {
-         if (value === null) return isNull(table[key])
+         const column = table[key]
+         if (value === null) return isNull(column)
          if (typeof value === 'object') {
             // Collect ALL range bounds — a compound { gte:1, lte:10 } needs both
             const bounds = []
-            if ('gte' in value) bounds.push(gte(table[key], value.gte))
-            if ('gt'  in value) bounds.push(gt(table[key],  value.gt))
-            if ('lte' in value) bounds.push(lte(table[key], value.lte))
-            if ('lt'  in value) bounds.push(lt(table[key],  value.lt))
+            if ('gte' in value) bounds.push(gte(column, coerceWhereValue(column, value.gte)))
+            if ('gt'  in value) bounds.push(gt(column,  coerceWhereValue(column, value.gt)))
+            if ('lte' in value) bounds.push(lte(column, coerceWhereValue(column, value.lte)))
+            if ('lt'  in value) bounds.push(lt(column,  coerceWhereValue(column, value.lt)))
             if (bounds.length > 0) return and(...bounds)
          }
-         return eq(table[key], value)
+         return eq(column, coerceWhereValue(column, value))
       })
    return conditions.length ? and(...conditions) : undefined;
+}
+
+function coerceWhereValue(column, value) {
+   if (column?.columnType === 'PgTimestamp' && typeof value === 'string') return new Date(value)
+   return value
 }
 
 function isPlainObject(value) {
