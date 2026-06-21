@@ -198,7 +198,7 @@ export function drizzleOfflinePlugin(app, db, metadata, models) {
                const existingTime = existingMeta
                   ? new Date(existingMeta.updated_at || existingMeta.created_at)
                   : null
-               if (existingTime && (!ts || existingTime > ts)) {
+               if (existingTime && (!ts || existingTime >= ts)) {
                   const value = (await tx.select().from(model).where(eq(model.uid, uid)))[0] ?? undefined
                   if (!value) {
                      const [meta] = await tx.insert(metadata)
