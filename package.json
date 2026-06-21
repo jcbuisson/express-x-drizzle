@@ -24,7 +24,9 @@
   "license": "MIT",
   "bugs": "",
   "keywords": [],
-  "scripts": {},
+  "scripts": {
+    "test": "echo all tests are in @jcbuisson/express-x"
+  },
   "dependencies": {
     "@jcbuisson/express-x": "^3.0.5",
     "@jcbuisson/express-x-client": "^3.0.5",
